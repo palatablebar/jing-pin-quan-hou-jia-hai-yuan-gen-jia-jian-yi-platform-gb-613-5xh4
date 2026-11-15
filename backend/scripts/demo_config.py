@@ -32,7 +32,12 @@ COMPETITORS = [
         "shop_url": "https://shop.douyin.example/muyan",
         "region": "华东",
         "note": "店播频繁改价，券后价常低于页面价 8%~12%",
-        "capture_config": {"replay": "fixture/dy-muyan", "cron": "0 8,20 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/dy-muyan",
+            "cron": "0 8,20 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.dy-muyan@pricewatch.io",
+        },
     },
     {
         "code": "tb-beian",
@@ -41,7 +46,12 @@ COMPETITORS = [
         "shop_url": "https://shop.tmall.example/beian",
         "region": "华东",
         "note": "满减阶梯 3 档，店铺券可叠加平台跨店券",
-        "capture_config": {"replay": "fixture/tb-beian", "cron": "0 9,21 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/tb-beian",
+            "cron": "0 9,21 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.tb-beian@pricewatch.io",
+        },
     },
     {
         "code": "jd-yuanmu",
@@ -50,7 +60,12 @@ COMPETITORS = [
         "shop_url": "https://shop.jd.example/yuanmu",
         "region": "华北",
         "note": "价格稳定，会员价另算，跟随幅度小",
-        "capture_config": {"replay": "fixture/jd-yuanmu", "cron": "30 9,21 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/jd-yuanmu",
+            "cron": "30 9,21 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.jd-yuanmu@pricewatch.io",
+        },
     },
     {
         "code": "pdd-huiju",
@@ -59,7 +74,12 @@ COMPETITORS = [
         "shop_url": "https://shop.pdd.example/huiju",
         "region": "华南",
         "note": "百亿补贴位波动大，需按件数拆算",
-        "capture_config": {"replay": "fixture/pdd-huiju", "cron": "0 10,22 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/pdd-huiju",
+            "cron": "0 10,22 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.pdd-huiju@pricewatch.io",
+        },
     },
     {
         "code": "xhs-qijian",
@@ -68,7 +88,12 @@ COMPETITORS = [
         "shop_url": "https://shop.xhs.example/qijian",
         "region": "华东",
         "note": "以笔记挂链为主，页面价偏高、券少",
-        "capture_config": {"replay": "fixture/xhs-qijian", "cron": "0 11,23 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/xhs-qijian",
+            "cron": "0 11,23 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.xhs-qijian@pricewatch.io",
+        },
     },
     {
         "code": "wd-nanmu",
@@ -77,7 +102,12 @@ COMPETITORS = [
         "shop_url": "https://shop.weidian.example/nanmu",
         "region": "西南",
         "note": "小店主手工改价，抓价失败率约 3%",
-        "capture_config": {"replay": "fixture/wd-nanmu", "cron": "0 12 * * *", "headers": {"ua": "pricewatch-rpa/2.1"}},
+        "capture_config": {
+            "replay": "fixture/wd-nanmu",
+            "cron": "0 12 * * *",
+            "headers": {"ua": "pricewatch-rpa/2.1"},
+            "capture_account": "rpa.wd-nanmu@pricewatch.io",
+        },
     },
 ]
 
@@ -328,6 +358,43 @@ def build_dataset() -> dict:
         "skus": skus,
         "rules": RULE_SPECS,
         "snapshots": snapshots,
+        "coupons": build_coupons(),
         "capture_days": CAPTURE_DAYS,
         "run_seed_key": "seed-run-capture-today",
     }
+
+
+# 限量券台账种子：每个竞品店铺一张店铺券 + 一张平台跨店券。
+# 初始状态可领（remaining > 0），所以 seed 首次测算的 42 条建议口径不变；
+# 「午间抢空 / 账号领取权用尽」由运行时改名额、改资格或重跑测算来演示。
+COUPON_SPECS = {
+    "shop_coupon": {"threshold": 200.0, "minus": 20.0, "stackable": True, "total_quota": 500, "claimed_count": 120},
+    "platform_coupon": {"per": 300.0, "minus": 50.0, "total_quota": 800, "claimed_count": 320},
+}
+COUPON_VALID_FROM_DAYS_AGO = 3  # 3 天前生效
+COUPON_VALID_FOR_DAYS = 10  # 10 天后到期
+PER_ACCOUNT_LIMIT = 3
+
+
+def build_coupons() -> list[dict]:
+    coupons: list[dict] = []
+    for competitor in COMPETITORS:
+        for kind, spec in COUPON_SPECS.items():
+            coupons.append(
+                {
+                    "code": f"{competitor['code']}-{kind.replace('_', '-')}",
+                    "competitor_code": competitor["code"],
+                    "kind": kind,
+                    "title": (
+                        f"{competitor['name']} · 店铺券满{spec['threshold']:g}减{spec['minus']:g}"
+                        if kind == "shop_coupon"
+                        else f"{competitor['name']} · 平台跨店每满{spec['per']:g}减{spec['minus']:g}"
+                    ),
+                    **spec,
+                    "per_account_limit": PER_ACCOUNT_LIMIT,
+                    "status": "active",
+                    "eligible": True,
+                    "note": "限量券：抓价账号每日最多领 per_account_limit 次，重跑同一次抓价复用已领记录",
+                }
+            )
+    return coupons

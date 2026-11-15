@@ -1,19 +1,26 @@
 import { api } from '../api.js';
-import { ENUMS, can, optionList, riskTone, statusTone } from '../config.js';
+import { ENUMS, basisTone, can, optionList, riskTone, statusTone } from '../config.js';
 import { drawer, errorBox, errorMessage, esc, field, filterBar, kv, table, toast } from '../ui.js';
 import { adviceCompare, couponText, money, signedPct } from '../components/price.js';
 
-const state = { status: '', risk: '', q: '' };
+const state = { status: '', risk: '', q: '', basisStatus: '' };
 
 function snapshotBlock(payload) {
   const snapshot = payload.snapshot;
   if (!snapshot) return '<p class="muted">这条建议没有关联快照。</p>';
+  const degraded = snapshot.visible_degraded;
   return `${kv([
     ['快照日期', esc(snapshot.captured_on)],
     ['页面价', `<span class="money">${money(snapshot.page_price)}</span>`],
     ['券配置', esc(couponText(snapshot))],
-    ['券后 1/2/3 件', `<span class="money">${money(snapshot.unit_price_1)} / ${money(snapshot.unit_price_2)} / ${money(snapshot.unit_price_3)}</span>`],
-    ['最优件数', snapshot.best_units ? `${snapshot.best_units} 件（${esc(snapshot.note || '')}）` : '—'],
+    ['早班券后 1/2/3 件', `<span class="money ${degraded ? 'masked' : ''}">${money(snapshot.unit_price_1)} / ${money(snapshot.unit_price_2)} / ${money(snapshot.unit_price_3)}</span>`],
+    ['当前可用价 1 件', `<b class="money">${money(snapshot.visible_unit_price_1)}</b>${degraded ? '（已剔除不可领的券）' : ''}`],
+    [
+      '最优件数',
+      snapshot.best_units
+        ? `${snapshot.best_units} 件（${esc(degraded ? snapshot.visible_note || snapshot.note || '' : snapshot.note || '')}）`
+        : '—',
+    ],
   ])}`;
 }
 
@@ -28,6 +35,21 @@ function ruleBlock(payload) {
     ['样本数', `${esc(payload.samples || 0)} 次抓价`],
   ])}
   <ul class="reason-list">${(payload.reasons || []).map((reason) => `<li>${esc(reason)}</li>`).join('')}</ul>`;
+}
+
+function basisBlock(advice) {
+  const payload = advice.payload || {};
+  const invalidated = advice.basis_status === 'invalidated' || advice.status === 'voided';
+  const rows = [
+    ['依据状态', `<span class="badge ${basisTone(advice.basis_status)}">${esc(advice.basis_status_label || '依据有效')}</span>`],
+    ['失效原因', esc(advice.basis_reason || '—')],
+    ['本次定价按', payload.priced_on === 'effective_visible' ? '当前可用价（已剔除失效券）' : '抓价时券后价'],
+    ['替代建议', advice.superseded_by_id ? `建议 #${esc(advice.superseded_by_id)}` : esc(payload.resolution || '—')],
+  ];
+  return `<div class="${invalidated ? 'note-strip danger' : 'note-strip'}">
+    <b>${invalidated ? '这条建议的依据已失效，不能继续审批。' : '这条建议的依据仍然有效。'}</b>
+    ${invalidated ? '请到「抓价快照」重跑测算，按当前可用价生成新建议。' : ''}
+  </div>${kv(rows)}`;
 }
 
 function decideForm(advice) {
@@ -49,7 +71,8 @@ function decideForm(advice) {
 }
 
 function openAdvice(view, ctx, advice) {
-  const canDecide = can(ctx.user.role, 'advice:decide');
+  const blocked = advice.basis_status === 'invalidated' || advice.status === 'voided';
+  const canDecide = can(ctx.user.role, 'advice:decide') && !blocked;
   const { root, close } = drawer({
     title: advice.sku_name,
     subtitle: `${advice.sku_code} · ${advice.competitor_name || '—'} · ${advice.run_no || ''}`,
@@ -61,13 +84,17 @@ function openAdvice(view, ctx, advice) {
         ['审批人', esc(advice.approver || '—')],
         ['审批备注', esc(advice.decide_note || '—')],
       ])}
+      <div class="section-label">券依据（券不可领 / 资格失效时作废旧依据）</div>
+      ${basisBlock(advice)}
       <div class="section-label">算法 B 明细（P25 锚点 / 底价约束）</div>
       ${ruleBlock(advice.payload || {})}
       <div class="section-label">算法 A 明细（这条建议依据的快照）</div>
       ${snapshotBlock(advice.payload || {})}`,
-    footer: canDecide
-      ? decideForm(advice)
-      : '<span class="mono muted">只有定价主管可以审批；价格运营可跑测算，店长只读。</span>',
+    footer: blocked
+      ? `<span class="mono muted">依据已失效：待审批建议已自动作废，${advice.superseded_by_id ? `请审批替身建议 #${esc(advice.superseded_by_id)}。` : '请先重跑测算拿到新建议。'}</span>`
+      : canDecide
+        ? decideForm(advice)
+        : '<span class="mono muted">只有定价主管可以审批；价格运营可跑测算，店长只读。</span>',
   });
   root.querySelector('#decide-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -92,7 +119,13 @@ export const advicesPage = {
   async render(view, ctx) {
     let data;
     try {
-      data = await api.get('/api/advices', { status: state.status, risk: state.risk, q: state.q, limit: 60 });
+      data = await api.get('/api/advices', {
+        status: state.status,
+        risk: state.risk,
+        q: state.q,
+        basis_status: state.basisStatus,
+        limit: 60,
+      });
     } catch (err) {
       view.innerHTML = errorBox(errorMessage(err));
       view.querySelector('#retry-btn')?.addEventListener('click', () => advicesPage.render(view, ctx));
@@ -113,10 +146,12 @@ export const advicesPage = {
             field({ label: '搜索', name: 'q', value: state.q, placeholder: 'SKU / 标题' }),
             field({ label: '风险', name: 'risk', value: state.risk, options: optionList(ENUMS.risk) }),
             field({ label: '审批状态', name: 'status', value: state.status, options: optionList(ENUMS.adviceStatus) }),
+            field({ label: '券依据', name: 'basis_status', value: state.basisStatus, options: optionList(ENUMS.basisStatus) }),
           ])}
         </div>
         ${table({
           rows: data.items,
+          rowClass: (row) => (row.basis_status === 'invalidated' || row.status === 'voided' ? 'row-bad' : ''),
           empty: { title: '没有匹配的建议', hint: '换个筛选，或去「抓价快照」重跑一次测算。' },
           columns: [
             {
@@ -125,7 +160,7 @@ export const advicesPage = {
               render: (row) =>
                 `<b>${esc(row.sku_name)}</b><div class="mono muted">${esc(row.sku_code)} · ${esc(row.rule_code)}</div>`,
             },
-            { key: 'p25', label: '竞品 P25', className: 'num money', render: (row) => money(row.p25) },
+            { key: 'p25', label: '竞品券后 P25', className: 'num money', render: (row) => money(row.p25) },
             { key: 'current_price', label: '当前价', className: 'num money', render: (row) => money(row.current_price) },
             {
               key: 'suggested_price',
@@ -135,6 +170,16 @@ export const advicesPage = {
             },
             { key: 'margin_pct', label: '建议毛利', className: 'num', render: (row) => `${Number(row.margin_pct).toFixed(2)}%` },
             { key: 'severity', label: '风险', render: (row) => `<span class="badge ${riskTone(row.severity)}">${esc(row.severity_label)}</span>` },
+            {
+              key: 'basis_status',
+              label: '券依据',
+              render: (row) =>
+                row.basis_status === 'invalidated'
+                  ? `<span class="badge high" title="${esc(row.basis_reason || '')}">依据已失效</span>
+                     <div class="muted tiny ellipsis">${esc(row.basis_reason || '')}</div>
+                     ${row.superseded_by_id ? `<div class="mono tiny">→ 建议 #${esc(row.superseded_by_id)}</div>` : ''}`
+                  : '<span class="badge ok">依据有效</span>',
+            },
             { key: 'status', label: '审批', render: (row) => `<span class="badge ${statusTone(row.status)}">${esc(row.status_label)}</span>` },
           ],
         })}
@@ -145,6 +190,7 @@ export const advicesPage = {
       state.q = filters.querySelector('[name=q]').value.trim();
       state.risk = filters.querySelector('[name=risk]').value;
       state.status = filters.querySelector('[name=status]').value;
+      state.basisStatus = filters.querySelector('[name=basis_status]').value;
       advicesPage.render(view, ctx);
     });
     filters?.querySelector('[name=q]')?.addEventListener('keydown', (event) => {

@@ -34,7 +34,8 @@ export function couponText(snapshot) {
   return parts.length ? parts.join(' ＋ ') : '无券（到手价＝页面价）';
 }
 
-/** 页面价 → 券后价 对照条：三档件数并排，最优档高亮。 */
+/** 页面价 → 券后价 对照条：三档件数并排，最优档高亮。
+ *  券失效后（basisStatus=invalidated）额外显示「当前可用价」与失效原因，不靠失效券报价。 */
 export function priceCompare(snapshot, { compact = false } = {}) {
   const tiers = [
     { units: 1, price: snapshot.unit_price_1 },
@@ -42,30 +43,62 @@ export function priceCompare(snapshot, { compact = false } = {}) {
     { units: 3, price: snapshot.unit_price_3 },
   ].filter((tier) => tier.price !== null && tier.price !== undefined);
   const best = snapshot.best_units;
-  return `<div class="price-compare ${compact ? 'compact' : ''}">
+  const invalidated = snapshot.basis_status === 'invalidated';
+  const visibleTiers = invalidated
+    ? [
+        { units: 1, price: snapshot.visible_unit_price_1 },
+        { units: 2, price: snapshot.visible_unit_price_2 },
+        { units: 3, price: snapshot.visible_unit_price_3 },
+      ].filter((tier) => tier.price !== null && tier.price !== undefined)
+    : [];
+  return `<div class="price-compare ${compact ? 'compact' : ''} ${invalidated ? 'is-invalidated' : ''}">
     <div class="pc-line">
       <span class="pc-label">页面价</span>
       <span class="pc-page money">${esc(money(snapshot.page_price))}</span>
       <span class="pc-arrow">→</span>
-      <span class="pc-label">券后到手</span>
-      <span class="pc-effective money">${esc(money(snapshot.unit_price_1))}</span>
-      <span class="chip">${esc(signedPct(((Number(snapshot.unit_price_1) || 0) / (Number(snapshot.page_price) || 1) - 1) * 100))}</span>
+      <span class="pc-label">${invalidated ? '早班券后' : '券后到手'}</span>
+      <span class="pc-effective money ${invalidated ? 'stale' : ''}">${esc(money(snapshot.unit_price_1))}</span>
+      <span class="chip ${invalidated ? 'chip-bad' : ''}">${esc(signedPct(((Number(snapshot.unit_price_1) || 0) / (Number(snapshot.page_price) || 1) - 1) * 100))}</span>
+      ${invalidated ? '<span class="badge high">依据已失效</span>' : ''}
     </div>
+    ${
+      invalidated
+        ? `<div class="pc-line pc-visible">
+            <span class="pc-label">当前可用价</span>
+            <span class="pc-effective money">${esc(money(snapshot.visible_unit_price_1))}</span>
+            <span class="mono muted">不靠已失效券的可见价</span>
+          </div>
+          <p class="muted tiny" data-testid="basis-reason">失效原因：${esc(snapshot.basis_reason || '券当前不可领')}</p>`
+        : ''
+    }
     <div class="pc-tiers">
       ${tiers
         .map(
-          (tier) => `<span class="pc-tier ${tier.units === best ? 'best' : ''}">
+          (tier) => `<span class="pc-tier ${tier.units === best ? 'best' : ''} ${invalidated ? 'stale' : ''}">
             ${tier.units} 件 <b class="money">${esc(money(tier.price))}</b>${tier.units === best ? '<i>最优</i>' : ''}
           </span>`,
         )
         .join('')}
     </div>
+    ${
+      visibleTiers.length
+        ? `<div class="pc-tiers visible">
+            <span class="pc-label">按当前可用券</span>
+            ${visibleTiers
+              .map(
+                (tier) => `<span class="pc-tier">${tier.units} 件 <b class="money">${esc(money(tier.price))}</b></span>`,
+              )
+              .join('')}
+          </div>`
+        : ''
+    }
   </div>`;
 }
 
 /** 一条建议的核心对照：竞品券后 → 建议价（含价差与风险）。 */
 export function adviceCompare(advice) {
-  return `<div class="advice-compare">
+  const invalidated = advice.basis_status === 'invalidated' || advice.status === 'voided';
+  return `<div class="advice-compare ${invalidated ? 'is-invalidated' : ''}">
     <div class="ac-col">
       <span class="ac-label">竞品券后 P25</span>
       <b class="ac-value money">${esc(money(advice.p25))}</b>
@@ -83,6 +116,16 @@ export function adviceCompare(advice) {
       <b class="ac-value money">${esc(money(advice.suggested_price))}</b>
       <span class="gap ${esc(gapTone(advice.gap_pct))}">${esc(signedPct(advice.gap_pct))}</span>
     </div>
+    ${invalidated ? '<span class="badge high ac-flag">依据已失效 · 作废</span>' : ''}
+  </div>`;
+}
+
+/** 券台账的一行：状态、名额、账号领取权。 */
+export function couponLine(item) {
+  return `<div class="coupon-line">
+    <b>${esc(item.title || item.code)}</b>
+    <span class="mono muted">${esc(item.code)} · ${esc(item.kind_label)} · 满${esc(item.threshold)}减${esc(item.minus)}</span>
+    <span class="mono">名额 ${esc(item.claimed_count)} / ${esc(item.total_quota)}（剩 ${esc(item.remaining)}）</span>
   </div>`;
 }
 

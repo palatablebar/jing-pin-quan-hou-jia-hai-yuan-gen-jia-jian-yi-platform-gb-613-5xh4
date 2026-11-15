@@ -5,6 +5,7 @@ from src.routes.advices import router as advices_router
 from src.routes.audit import router as audit_router
 from src.routes.auth import router as auth_router
 from src.routes.competitors import router as competitors_router
+from src.routes.coupons import router as coupons_router
 from src.routes.exports import router as exports_router
 from src.routes.health import router as health_router
 from src.routes.overview import router as overview_router
@@ -21,6 +22,7 @@ api_router.include_router(competitors_router)
 api_router.include_router(skus_router)
 api_router.include_router(rules_router)
 api_router.include_router(snapshots_router)
+api_router.include_router(coupons_router)
 api_router.include_router(runs_router)
 api_router.include_router(advices_router)
 api_router.include_router(exports_router)

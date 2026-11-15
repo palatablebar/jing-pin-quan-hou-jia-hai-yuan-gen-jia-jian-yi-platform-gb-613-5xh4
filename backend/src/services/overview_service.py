@@ -53,6 +53,13 @@ def overview(db: Session) -> dict:
     avg_gap = round(sum(float(row[0]) for row in gap_rows) / len(gap_rows), 2) if gap_rows else 0.0
     avg_margin = round(sum(float(row[1]) for row in gap_rows) / len(gap_rows), 2) if gap_rows else 0.0
 
+    invalidated_snapshots = (
+        db.scalar(select(func.count()).select_from(Snapshot).where(Snapshot.basis_status == "invalidated")) or 0
+    )
+    voided_advices = (
+        db.scalar(select(func.count()).select_from(Advice).where(Advice.status == "voided")) or 0
+    )
+
     latest_day = db.scalar(select(func.max(Snapshot.captured_on)))
     discount_rows = []
     if latest_day:
@@ -139,6 +146,8 @@ def overview(db: Session) -> dict:
         "avg_gap_pct": avg_gap,
         "avg_margin_pct": avg_margin,
         "avg_discount_pct": avg_discount,
+        "invalidated_snapshots_total": invalidated_snapshots,
+        "voided_advices_total": voided_advices,
         "latest_capture_on": latest_day.isoformat() if isinstance(latest_day, date) else None,
         "worker_alive": worker_alive(),
         "risk": [

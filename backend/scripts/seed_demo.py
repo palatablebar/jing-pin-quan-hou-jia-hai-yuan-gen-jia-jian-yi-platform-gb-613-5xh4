@@ -1,4 +1,4 @@
-"""幂等 seed：3 账号 / 6 竞品 / 320 SKU / 5 规则 / 960 快照 / 1 次测算（42 条建议）。
+"""幂等 seed：3 账号 / 6 竞品 / 320 SKU / 5 规则 / 12 张限量券 / 960 快照 / 1 次测算（42 条建议）。
 
 自然键 upsert：
   users.email
@@ -22,6 +22,7 @@ from src.config.database import session_scope
 from src.models.advice import Advice
 from src.models.audit import AuditLog
 from src.models.competitor import Competitor
+from src.models.coupon import Coupon
 from src.models.rule import Rule
 from src.models.run import Run
 from src.models.sku import Sku
@@ -34,6 +35,8 @@ from src.utils.timeutil import local_now, utcnow
 from scripts.demo_config import (
     BRAND,
     CAPTURE_DAYS,
+    COUPON_VALID_FOR_DAYS,
+    COUPON_VALID_FROM_DAYS_AGO,
     DEMO_PASSWORD,
     DEMO_USERS,
     ORG,
@@ -129,6 +132,39 @@ def ensure_rules(db, specs: list[dict], skus: dict[str, Sku]) -> int:
     return db.scalar(select(func.count()).select_from(Rule)) or 0
 
 
+def ensure_coupons(db, specs: list[dict], competitors: dict[str, Competitor], today: date) -> dict[str, Coupon]:
+    for spec in specs:
+        coupon = db.scalar(select(Coupon).where(Coupon.code == spec["code"]))
+        if coupon is not None:
+            continue
+        competitor = competitors.get(spec["competitor_code"])
+        if competitor is None:
+            continue
+        db.add(
+            Coupon(
+                code=spec["code"],
+                competitor_id=competitor.id,
+                kind=spec["kind"],
+                title=spec["title"],
+                threshold=spec.get("threshold") or 0.0,
+                minus=spec.get("minus") or 0.0,
+                per=spec.get("per") or 0.0,
+                stackable=spec.get("stackable", True),
+                total_quota=spec["total_quota"],
+                claimed_count=spec["claimed_count"],
+                per_account_limit=spec.get("per_account_limit") or 1,
+                status=spec.get("status") or "active",
+                eligible=spec.get("eligible", True),
+                valid_from=today - timedelta(days=COUPON_VALID_FROM_DAYS_AGO),
+                valid_until=today + timedelta(days=COUPON_VALID_FOR_DAYS),
+                note=spec.get("note"),
+                seed_key=f"seed-coupon-{spec['code']}",
+            )
+        )
+    db.flush()
+    return {row.code: row for row in db.scalars(select(Coupon)).all()}
+
+
 def ensure_snapshots(db, specs: list[dict], skus: dict[str, Sku], competitors: dict[str, Competitor], today: date) -> int:
     existing = {
         (row.sku_id, row.captured_on)
@@ -207,6 +243,7 @@ def seed_all() -> dict:
         competitors = ensure_competitors(db, dataset["competitors"])
         skus = ensure_skus(db, dataset["skus"], competitors)
         ensure_rules(db, dataset["rules"], skus)
+        ensure_coupons(db, dataset["coupons"], competitors, today)
         ensure_snapshots(db, dataset["snapshots"], skus, competitors, today)
         run = ensure_run(db, today)
         ensure_audit(db)

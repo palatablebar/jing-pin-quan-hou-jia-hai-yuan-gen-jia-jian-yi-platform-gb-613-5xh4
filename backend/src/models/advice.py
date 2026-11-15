@@ -35,6 +35,12 @@ class Advice(Base):
     margin_pct: Mapped[float] = mapped_column(Float, default=0.0)
     gap_pct: Mapped[float] = mapped_column(Float, default=0.0)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 依据链：券失效后旧依据作废，重算产出新建议时这里指向新建议
+    basis_status: Mapped[str] = mapped_column(String(16), default="valid", index=True)  # valid/invalidated
+    basis_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    superseded_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("advices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     approver: Mapped[str | None] = mapped_column(String(160), nullable=True)
     decide_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -1665,3 +1665,125 @@ table.data tbody tr.best-row {
     align-items: flex-start;
   }
 }
+
+/* ---------- 限量券台账 / 依据失效（gb-613 增量） ---------- */
+.price-compare.is-invalidated,
+.advice-compare.is-invalidated {
+  border-left-color: var(--danger);
+  background: var(--danger-wash);
+}
+
+.pc-effective.stale,
+.pc-tier.stale b {
+  color: var(--ink-faint);
+  text-decoration: line-through;
+}
+
+.pc-line.pc-visible {
+  border-top: 1px dashed var(--rule-strong);
+  padding-top: 8px;
+}
+
+.pc-tier.stale {
+  border-style: dotted;
+  opacity: 0.75;
+}
+
+.pc-tiers.visible .pc-label {
+  margin-right: 4px;
+}
+
+.chip.chip-bad {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+
+.ac-flag {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.coupon-line {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent-deep);
+  background: var(--paper-2);
+  border-radius: var(--radius);
+}
+
+.coupon-line.is-bad {
+  border-left-color: var(--danger);
+  background: var(--danger-wash);
+}
+
+.meter {
+  display: grid;
+  gap: 4px;
+}
+
+.meter-track {
+  height: 8px;
+  background: var(--paper-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent-deep);
+}
+
+.meter-fill.bad {
+  background: var(--danger);
+}
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.timeline li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  border-bottom: 1px dotted var(--rule);
+  padding-bottom: 6px;
+}
+
+.timeline .tl-time {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.timeline .tl-body {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+
+.note-strip {
+  border: 1px dashed var(--rule-strong);
+  background: var(--warn-wash);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+}
+
+.note-strip.danger {
+  background: var(--danger-wash);
+  border-color: var(--danger);
+}
+
+table.data tr.row-bad td {
+  background: var(--danger-wash);
+}

@@ -21,8 +21,9 @@ export const NAV = [
   { to: '#/overview', no: '01', label: '总览', permission: 'overview:read' },
   { to: '#/catalog', no: '02', label: '竞品与 SKU', permission: 'sku:read' },
   { to: '#/snapshots', no: '03', label: '抓价快照', permission: 'snapshot:read' },
-  { to: '#/advices', no: '04', label: '跟价建议', permission: 'advice:read' },
-  { to: '#/exports', no: '05', label: '导出与审计', permission: 'overview:read' },
+  { to: '#/coupons', no: '04', label: '限量券台账', permission: 'coupon:read' },
+  { to: '#/advices', no: '05', label: '跟价建议', permission: 'advice:read' },
+  { to: '#/exports', no: '06', label: '导出与审计', permission: 'overview:read' },
 ];
 
 export const ROLE_LABELS = {
@@ -37,13 +38,13 @@ export const PERMISSIONS = {
     'competitor:read', 'competitor:write',
     'sku:read', 'sku:write',
     'rule:read', 'rule:write',
-    'snapshot:read',
+    'snapshot:read', 'snapshot:write', 'coupon:read', 'coupon:write',
     'run:read', 'run:create',
     'advice:read', 'advice:decide',
     'export:read', 'audit:read',
   ],
-  analyst: ['overview:read', 'competitor:read', 'sku:read', 'rule:read', 'snapshot:read', 'run:read', 'run:create', 'advice:read'],
-  viewer: ['overview:read', 'competitor:read', 'sku:read', 'rule:read', 'snapshot:read', 'run:read', 'advice:read'],
+  analyst: ['overview:read', 'competitor:read', 'sku:read', 'rule:read', 'snapshot:read', 'snapshot:write', 'coupon:read', 'run:read', 'run:create', 'advice:read'],
+  viewer: ['overview:read', 'competitor:read', 'sku:read', 'rule:read', 'snapshot:read', 'coupon:read', 'run:read', 'advice:read'],
 };
 
 /* 共享枚举：与 backend/src/constants/enums.py 同步（README「共享枚举出现位置」） */
@@ -77,6 +78,26 @@ export const ENUMS = {
     pending: '待审批',
     approved: '已批改价',
     rejected: '已驳回',
+    voided: '已作废',
+  },
+  couponStatus: {
+    active: '可领',
+    exhausted: '已抢空',
+    paused: '已下线',
+    expired: '已过期',
+  },
+  claimStatus: {
+    not_claimed: '未领取',
+    claimed: '本次领取',
+    reused: '复用早班领取',
+    limit_reached: '领取权已用尽',
+    ineligible: '无领取资格',
+    exhausted: '名额已抢空',
+    unavailable: '券不可领',
+  },
+  basisStatus: {
+    valid: '依据有效',
+    invalidated: '依据已失效',
   },
   action: {
     follow: '跟价下调',
@@ -106,7 +127,27 @@ export function riskTone(risk) {
 }
 
 export function statusTone(status) {
-  return { pending: 'pending warn', approved: 'ok', rejected: 'danger' }[status] || 'info';
+  return { pending: 'pending warn', approved: 'ok', rejected: 'danger', voided: 'high' }[status] || 'info';
+}
+
+export function couponTone(status) {
+  return { active: 'ok', exhausted: 'high', paused: 'warn', expired: 'warn' }[status] || 'info';
+}
+
+export function claimTone(status) {
+  return {
+    claimed: 'ok',
+    reused: 'info',
+    not_claimed: '',
+    limit_reached: 'high',
+    ineligible: 'high',
+    exhausted: 'high',
+    unavailable: 'medium',
+  }[status] ?? 'info';
+}
+
+export function basisTone(status) {
+  return status === 'invalidated' ? 'high' : 'ok';
 }
 
 export function optionList(dict, withAll = '全部') {

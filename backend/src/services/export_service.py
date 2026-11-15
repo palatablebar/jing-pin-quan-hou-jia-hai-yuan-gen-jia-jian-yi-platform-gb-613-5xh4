@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from src.constants.enums import (
     ADVICE_ACTION_LABELS,
     ADVICE_STATUS_LABELS,
+    BASIS_STATUS_LABELS,
     CATEGORY_LABELS,
     RISK_LABELS,
     RUN_STATUS_LABELS,
@@ -47,8 +48,9 @@ def advices_csv(db: Session, run_id: int | None = None) -> bytes:
     headers = [
         "建议编号", "运行号", "SKU编码", "SKU名称", "类目", "竞品店铺",
         "页面价", "券后1件", "券后2件", "券后3件", "命中组合",
+        "可见价1件", "可见价2件", "可见价3件", "可见价说明", "依据状态", "依据失效原因",
         "竞品P10", "竞品P25", "竞品P50", "我方当前价", "建议价", "价差%", "建议毛利%",
-        "风险", "动作", "状态", "规则", "审批人", "审批备注", "生成时间",
+        "风险", "动作", "状态", "规则", "替代建议编号", "审批人", "审批备注", "生成时间",
     ]
     rows = []
     for advice in advices:
@@ -75,6 +77,12 @@ def advices_csv(db: Session, run_id: int | None = None) -> bytes:
                 f"{snapshot.get('unit_price_2'):.2f}" if snapshot.get("unit_price_2") else "",
                 f"{snapshot.get('unit_price_3'):.2f}" if snapshot.get("unit_price_3") else "",
                 snapshot.get("note") or _coupon_text(effective),
+                _fmt(snapshot.get("visible_unit_price_1")),
+                _fmt(snapshot.get("visible_unit_price_2")),
+                _fmt(snapshot.get("visible_unit_price_3")),
+                snapshot.get("visible_note") or "",
+                BASIS_STATUS_LABELS.get(advice.basis_status or "valid", advice.basis_status or "valid"),
+                advice.basis_reason or "",
                 f"{advice.p10:.2f}",
                 f"{advice.p25:.2f}",
                 f"{advice.p50:.2f}",
@@ -86,6 +94,7 @@ def advices_csv(db: Session, run_id: int | None = None) -> bytes:
                 ADVICE_ACTION_LABELS.get(advice.action, advice.action),
                 ADVICE_STATUS_LABELS.get(advice.status, advice.status),
                 advice.rule_code,
+                advice.superseded_by_id or "",
                 advice.approver or "",
                 advice.decide_note or "",
                 advice.created_at.strftime("%Y-%m-%d %H:%M") if advice.created_at else "",
@@ -104,13 +113,15 @@ def snapshots_csv(db: Session, captured_on=None) -> bytes:
     headers = [
         "快照编号", "快照日期", "SKU编码", "SKU名称", "类目", "竞品店铺",
         "页面价", "满减", "店铺券", "平台券", "会员折扣",
-        "券后1件", "券后2件", "券后3件", "最优件数", "命中组合", "券后折扣%", "采集活动",
+        "券后1件", "券后2件", "券后3件", "最优件数", "命中组合", "券后折扣%",
+        "可见价1件", "可见价2件", "可见价3件", "依据状态", "依据失效原因", "采集活动",
     ]
     rows = []
     for snapshot in snapshots:
         sku = skus.get(snapshot.sku_id)
         competitor = competitors.get(snapshot.competitor_id)
         effective = snapshot.effective or {}
+        visible = snapshot.effective_visible or {}
         rows.append(
             [
                 snapshot.id,
@@ -130,6 +141,11 @@ def snapshots_csv(db: Session, captured_on=None) -> bytes:
                 effective.get("best_units") or "",
                 effective.get("note") or "",
                 _fmt(effective.get("discount_pct")),
+                _fmt(visible.get("unit_price_1")),
+                _fmt(visible.get("unit_price_2")),
+                _fmt(visible.get("unit_price_3")),
+                BASIS_STATUS_LABELS.get(snapshot.basis_status or "valid", snapshot.basis_status or "valid"),
+                snapshot.basis_reason or "",
                 snapshot.campaign,
             ]
         )
@@ -144,7 +160,10 @@ def _fmt(value) -> str:
 
 def runs_csv(db: Session) -> bytes:
     runs = db.scalars(select(Run).order_by(Run.id)).all()
-    headers = ["运行号", "快照日期", "触发方式", "状态", "输入快照", "建议条数", "高风险", "平均价差%", "操作人", "开始时间", "结束时间"]
+    headers = [
+        "运行号", "快照日期", "触发方式", "状态", "输入快照", "建议条数", "高风险", "平均价差%",
+        "新领券", "复用领取", "被拦领取", "依据失效快照", "作废建议", "操作人", "开始时间", "结束时间",
+    ]
     rows = [
         [
             run.run_no,
@@ -155,6 +174,11 @@ def runs_csv(db: Session) -> bytes:
             run.output_count,
             (run.metrics or {}).get("high", 0),
             (run.metrics or {}).get("avg_gap_pct", 0),
+            (run.metrics or {}).get("claims_new", 0),
+            (run.metrics or {}).get("claims_reused", 0),
+            (run.metrics or {}).get("claims_blocked", 0),
+            (run.metrics or {}).get("invalidated_snapshots", 0),
+            (run.metrics or {}).get("voided_advices", 0),
             run.operator_email,
             run.started_at.strftime("%Y-%m-%d %H:%M") if run.started_at else "",
             run.finished_at.strftime("%Y-%m-%d %H:%M") if run.finished_at else "",

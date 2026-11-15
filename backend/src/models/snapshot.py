@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models import Base
@@ -26,7 +26,13 @@ class Snapshot(Base):
     stock: Mapped[int] = mapped_column(Integer, default=0)
     campaign: Mapped[str] = mapped_column(String(80), default="")
     source_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # 算法 A 输出：unit_price_1..3 / best / 命中组合说明
+    # 算法 A 输出：captured 口径（抓价当时券可领时的 unit_price_1..3 / best / 命中组合说明）
     effective: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 券失效后按「当前还能领的券」重算的可见价；券都可用时等于 effective
+    effective_visible: Mapped[dict] = mapped_column(JSON, default=dict)
+    # valid / invalidated：依据失效时 basis_reason 记录哪张券、什么原因
+    basis_status: Mapped[str] = mapped_column(String(16), default="valid", index=True)
+    basis_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    basis_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     seed_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

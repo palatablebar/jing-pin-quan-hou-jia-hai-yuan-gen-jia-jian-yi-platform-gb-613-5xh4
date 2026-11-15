@@ -12,6 +12,11 @@
 
 输出 unit_price_1/2/3、最优件数 best_units、命中组合说明 note 与折扣率。
 失败态（页面价非法 / 券配置非法）返回 valid=False + error，由调用方计入 unparsed。
+
+券可用性剔除（unavailable）：传入 {券类型: 失效原因}，例如
+{"shop_coupon": "券已抢空（名额 200/200）"}。命中的券会先被剔除再重算，结果里
+额外返回 excluded / degraded / unavailable 字段，供页面展示「不靠该券的可见价」。
+不传 unavailable 时计算口径与历史版本逐字一致。
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 MAX_UNITS = 3
 PLATFORM_PRIORITY = ("platform_coupon", "shop_coupon")
+COUPON_KINDS = ("full_reduction", "shop_coupon", "platform_coupon", "member_discount")
 
 
 def _money(value: float) -> float:
@@ -179,10 +185,15 @@ def _trim(value: float) -> str:
     return ("%.2f" % value).rstrip("0").rstrip(".")
 
 
-def compute_effective_price(spec: dict, max_units: int = MAX_UNITS) -> dict:
-    """券后有效价还原。返回 {valid, units[], unit_price_1..3, best_units, best_unit_price, note, warnings, confidence}。"""
+def compute_effective_price(spec: dict, max_units: int = MAX_UNITS, unavailable: dict[str, str] | None = None) -> dict:
+    """券后有效价还原。返回 {valid, units[], unit_price_1..3, best_units, best_unit_price, note, warnings, confidence}。
+
+    unavailable: {券类型: 失效原因}；命中的券会从可结算口径中剔除后重算，并记录 excluded。
+    """
+    excluded = {kind: str(reason) for kind, reason in (unavailable or {}).items() if kind in COUPON_KINDS}
+    raw_spec = spec if not excluded else _drop_unavailable(spec, excluded)
     try:
-        norm = normalize_spec(spec)
+        norm = normalize_spec(raw_spec)
     except (ValueError, TypeError) as exc:
         return {
             "valid": False,
@@ -197,6 +208,9 @@ def compute_effective_price(spec: dict, max_units: int = MAX_UNITS) -> dict:
             "note": "配置非法，无法还原",
             "warnings": [str(exc)],
             "confidence": 0.0,
+            "excluded": excluded,
+            "degraded": bool(excluded),
+            "unavailable": excluded,
         }
 
     breakdowns = [_unit_breakdown(norm, units) for units in range(1, min(max_units, MAX_UNITS) + 1)]
@@ -206,6 +220,8 @@ def compute_effective_price(spec: dict, max_units: int = MAX_UNITS) -> dict:
         warnings.append("该快照没有任何优惠，券后价等于页面价")
     if norm["shop_coupon"] and not norm["shop_coupon"]["stackable"]:
         warnings.append("店铺券标注为不可叠加，与平台券按更省一档命中")
+    if excluded:
+        warnings.append("部分券当前不可领，已按剩余可用券重算：" + "；".join(f"{k}（{v}）" for k, v in excluded.items()))
 
     notes = [f"{item['units']}件单价 ¥{item['unit_price']}（{item['note']}）" for item in breakdowns]
     return {
@@ -223,4 +239,22 @@ def compute_effective_price(spec: dict, max_units: int = MAX_UNITS) -> dict:
         "detail": best["note"],
         "warnings": warnings,
         "confidence": 0.99 if not warnings else 0.9,
+        "excluded": excluded,
+        "degraded": bool(excluded),
+        "unavailable": excluded,
+        "visible_unit_price": best["unit_price"],
     }
+
+
+def _drop_unavailable(spec: dict, excluded: dict[str, str]) -> dict:
+    """按失效券类型复制一份快照口径，剔除对应优惠（保持调用方 spec 不被修改）。"""
+    cleaned = dict(spec or {})
+    if "full_reduction" in excluded:
+        cleaned["full_reduction"] = []
+    if "shop_coupon" in excluded:
+        cleaned["shop_coupon"] = None
+    if "platform_coupon" in excluded:
+        cleaned["platform_coupon"] = None
+    if "member_discount" in excluded:
+        cleaned["member_discount"] = 1.0
+    return cleaned

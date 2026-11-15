@@ -14,6 +14,7 @@ from src.models.rule import Rule  # noqa: E402
 from src.models.snapshot import Snapshot  # noqa: E402
 from src.models.run import Run  # noqa: E402
 from src.models.advice import Advice  # noqa: E402
+from src.models.coupon import Coupon, CouponClaim, CouponEvent, SnapshotCoupon  # noqa: E402
 
 __all__ = [
     "Base",
@@ -25,4 +26,8 @@ __all__ = [
     "Snapshot",
     "Run",
     "Advice",
+    "Coupon",
+    "SnapshotCoupon",
+    "CouponClaim",
+    "CouponEvent",
 ]

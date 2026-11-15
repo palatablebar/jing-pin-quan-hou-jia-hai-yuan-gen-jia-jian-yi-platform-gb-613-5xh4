@@ -23,7 +23,7 @@ PERMISSIONS: dict[str, set[str]] = {
         "competitor:read", "competitor:write",
         "sku:read", "sku:write",
         "rule:read", "rule:write",
-        "snapshot:read",
+        "snapshot:read", "snapshot:write", "coupon:read", "coupon:write",
         "run:read", "run:create",
         "advice:read", "advice:decide",
         "export:read", "audit:read", "overview:read",
@@ -32,13 +32,13 @@ PERMISSIONS: dict[str, set[str]] = {
         "competitor:read",
         "sku:read",
         "rule:read",
-        "snapshot:read",
+        "snapshot:read", "snapshot:write", "coupon:read",
         "run:read", "run:create",
         "advice:read",
         "overview:read",
     },
     Role.VIEWER.value: {
-        "competitor:read", "sku:read", "rule:read", "snapshot:read",
+        "competitor:read", "sku:read", "rule:read", "snapshot:read", "coupon:read",
         "run:read", "advice:read", "overview:read",
     },
 }
@@ -46,6 +46,8 @@ PERMISSIONS: dict[str, set[str]] = {
 COMPETITOR_WRITE_ROLES = (Role.ADMIN.value,)
 SKU_WRITE_ROLES = (Role.ADMIN.value,)
 RULE_WRITE_ROLES = (Role.ADMIN.value,)
+COUPON_WRITE_ROLES = (Role.ADMIN.value,)
+SNAPSHOT_CHECK_ROLES = (Role.ADMIN.value, Role.ANALYST.value)
 RUN_CREATE_ROLES = (Role.ADMIN.value, Role.ANALYST.value)
 DECIDE_ROLES = (Role.ADMIN.value,)
 EXPORT_ROLES = (Role.ADMIN.value,)

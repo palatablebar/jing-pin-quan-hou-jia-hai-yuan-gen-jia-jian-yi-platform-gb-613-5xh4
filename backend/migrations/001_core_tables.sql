@@ -76,7 +76,11 @@ CREATE TABLE snapshots (
     stock           INTEGER      NOT NULL DEFAULT 0,
     campaign        VARCHAR(80),
     source_url      VARCHAR(255),
-    effective       JSON,
+    effective       JSON,             -- 抓价口径（券面价原样留档）
+    effective_visible JSON,           -- 券不可领时按剩余可用券重算的可见价
+    basis_status    VARCHAR(16) NOT NULL DEFAULT 'valid',  -- valid / invalidated
+    basis_reason    TEXT,
+    basis_checked_at TIMESTAMP,
     seed_key        VARCHAR(120) UNIQUE,
     created_at      TIMESTAMP    NOT NULL,
     CONSTRAINT uq_snapshots_sku_day UNIQUE (sku_id, captured_on)
@@ -142,6 +146,9 @@ CREATE TABLE advices (
     margin_pct      DOUBLE PRECISION NOT NULL DEFAULT 0,
     gap_pct         DOUBLE PRECISION NOT NULL DEFAULT 0,
     payload         JSON,
+    basis_status    VARCHAR(16) NOT NULL DEFAULT 'valid',
+    basis_reason    TEXT,
+    superseded_by_id INTEGER REFERENCES advices(id) ON DELETE SET NULL,
     approver        VARCHAR(160),
     decide_note     TEXT,
     decided_at      TIMESTAMP,
@@ -155,3 +162,88 @@ CREATE INDEX idx_advices_status ON advices (status);
 CREATE INDEX idx_advices_severity ON advices (severity);
 CREATE INDEX idx_snapshots_day ON snapshots (captured_on);
 CREATE INDEX idx_rules_priority ON rules (priority);
+
+-- 限量券台账：券状态 / 名额 / 抓价账号领取权 / 变更留痕
+CREATE TABLE coupons (
+    id              SERIAL PRIMARY KEY,
+    code            VARCHAR(64)  NOT NULL UNIQUE,
+    competitor_id   INTEGER      NOT NULL REFERENCES competitors(id) ON DELETE CASCADE,
+    sku_id          INTEGER REFERENCES skus(id) ON DELETE SET NULL,
+    title           VARCHAR(160),
+    kind            VARCHAR(24)  NOT NULL DEFAULT 'shop_coupon',
+    threshold       DOUBLE PRECISION NOT NULL DEFAULT 0,
+    minus           DOUBLE PRECISION NOT NULL DEFAULT 0,
+    per             DOUBLE PRECISION NOT NULL DEFAULT 0,
+    stackable       BOOLEAN      NOT NULL DEFAULT TRUE,
+    total_quota     INTEGER      NOT NULL DEFAULT 0,
+    claimed_count   INTEGER      NOT NULL DEFAULT 0,
+    per_account_limit INTEGER    NOT NULL DEFAULT 1,
+    status          VARCHAR(16)  NOT NULL DEFAULT 'active',
+    eligible        BOOLEAN      NOT NULL DEFAULT TRUE,
+    valid_from      DATE,
+    valid_until     DATE,
+    note            TEXT,
+    meta            JSON,
+    seed_key        VARCHAR(120) UNIQUE,
+    created_at      TIMESTAMP    NOT NULL,
+    updated_at      TIMESTAMP    NOT NULL
+);
+
+-- 快照与券的关联：抓价时状态 + 当前状态、账号领取权、名额前后值
+CREATE TABLE snapshot_coupons (
+    id              SERIAL PRIMARY KEY,
+    snapshot_id     INTEGER      NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+    coupon_id       INTEGER      NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+    kind            VARCHAR(24)  NOT NULL DEFAULT 'shop_coupon',
+    capture_account VARCHAR(160),
+    status_at_capture VARCHAR(16) NOT NULL DEFAULT 'active',
+    status_now      VARCHAR(16)  NOT NULL DEFAULT 'active',
+    claim_status_at_capture VARCHAR(24) NOT NULL DEFAULT 'not_claimed',
+    claim_status    VARCHAR(24)  NOT NULL DEFAULT 'not_claimed',
+    claimable       BOOLEAN      NOT NULL DEFAULT TRUE,
+    remaining_at_capture INTEGER NOT NULL DEFAULT 0,
+    remaining_now   INTEGER      NOT NULL DEFAULT 0,
+    reason          TEXT,
+    captured_at     TIMESTAMP    NOT NULL,
+    checked_at      TIMESTAMP,
+    CONSTRAINT uq_snapshot_coupons UNIQUE (snapshot_id, coupon_id)
+);
+
+-- 抓价账号领取记录：claim_key = 券+账号+抓价日，重跑只累加 attempts，不重复占名额
+CREATE TABLE coupon_claims (
+    id              SERIAL PRIMARY KEY,
+    coupon_id       INTEGER      NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+    sku_id          INTEGER REFERENCES skus(id) ON DELETE SET NULL,
+    account_email   VARCHAR(160) NOT NULL,
+    captured_on     DATE         NOT NULL,
+    claim_key       VARCHAR(200) NOT NULL UNIQUE,
+    result          VARCHAR(24)  NOT NULL DEFAULT 'claimed',
+    reason          TEXT,
+    attempts        INTEGER      NOT NULL DEFAULT 1,
+    first_attempt_at TIMESTAMP   NOT NULL,
+    last_attempt_at TIMESTAMP    NOT NULL,
+    seed_key        VARCHAR(120) UNIQUE
+);
+
+-- 券状态 / 名额 / 资格每次变化的前后值
+CREATE TABLE coupon_events (
+    id              SERIAL PRIMARY KEY,
+    coupon_id       INTEGER      NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+    event           VARCHAR(32)  NOT NULL DEFAULT 'update',
+    before_status   VARCHAR(16),
+    after_status    VARCHAR(16),
+    before_remaining INTEGER,
+    after_remaining INTEGER,
+    before_eligible BOOLEAN,
+    after_eligible  BOOLEAN,
+    reason          TEXT,
+    actor_email     VARCHAR(160) NOT NULL DEFAULT 'system',
+    actor_role      VARCHAR(20)  NOT NULL DEFAULT 'system',
+    snapshot_id     INTEGER REFERENCES snapshots(id) ON DELETE SET NULL,
+    seed_key        VARCHAR(120) UNIQUE,
+    created_at      TIMESTAMP    NOT NULL
+);
+
+CREATE INDEX idx_snapshots_basis ON snapshots (basis_status);
+CREATE INDEX idx_advices_basis ON advices (basis_status);
+CREATE INDEX idx_coupons_status ON coupons (status);

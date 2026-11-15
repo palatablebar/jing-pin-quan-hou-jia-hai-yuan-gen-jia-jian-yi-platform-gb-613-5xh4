@@ -85,18 +85,21 @@ class AdviceStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    VOIDED = "voided"  # 依据失效自动作废（券不可领 / 名额抢空），不再参与审批
 
 
 ADVICE_STATUS_LABELS: dict[str, str] = {
     AdviceStatus.PENDING.value: "待审批",
     AdviceStatus.APPROVED.value: "已批改价",
     AdviceStatus.REJECTED.value: "已驳回",
+    AdviceStatus.VOIDED.value: "已作废",
 }
 
 ADVICE_STATUS_ORDER: list[str] = [
     AdviceStatus.PENDING.value,
     AdviceStatus.APPROVED.value,
     AdviceStatus.REJECTED.value,
+    AdviceStatus.VOIDED.value,
 ]
 
 
@@ -159,4 +162,57 @@ COUPON_KIND_LABELS: dict[str, str] = {
     CouponKind.SHOP_COUPON.value: "店铺券",
     CouponKind.PLATFORM_COUPON.value: "平台券",
     CouponKind.MEMBER_DISCOUNT.value: "会员折扣",
+}
+
+
+class CouponStatus(StrEnum):
+    """限量券的当前状态（决定还能不能领）。"""
+
+    ACTIVE = "active"
+    EXHAUSTED = "exhausted"
+    PAUSED = "paused"
+    EXPIRED = "expired"
+
+
+COUPON_STATUS_LABELS: dict[str, str] = {
+    CouponStatus.ACTIVE.value: "可领",
+    CouponStatus.EXHAUSTED.value: "已抢空",
+    CouponStatus.PAUSED.value: "已下线",
+    CouponStatus.EXPIRED.value: "已过期",
+}
+
+
+class ClaimStatus(StrEnum):
+    """抓价账号在这张券上的领取结果（领取权台账口径）。"""
+
+    NOT_CLAIMED = "not_claimed"
+    CLAIMED = "claimed"  # 本次新领到
+    REUSED = "reused"  # 同一抓价重跑，复用已有领取记录，不重复占名额
+    LIMIT_REACHED = "limit_reached"  # 账号领取权已用尽
+    INELIGIBLE = "ineligible"  # 账号无领取资格
+    EXHAUSTED = "exhausted"  # 名额已抢空
+    UNAVAILABLE = "unavailable"  # 已下线 / 过期
+
+
+CLAIM_STATUS_LABELS: dict[str, str] = {
+    ClaimStatus.NOT_CLAIMED.value: "未领取",
+    ClaimStatus.CLAIMED.value: "本次领取",
+    ClaimStatus.REUSED.value: "复用早班领取",
+    ClaimStatus.LIMIT_REACHED.value: "领取权已用尽",
+    ClaimStatus.INELIGIBLE.value: "无领取资格",
+    ClaimStatus.EXHAUSTED.value: "名额已抢空",
+    ClaimStatus.UNAVAILABLE.value: "券不可领",
+}
+
+
+class BasisStatus(StrEnum):
+    """跟价建议所依据的券后价是否仍然成立。"""
+
+    VALID = "valid"
+    INVALIDATED = "invalidated"
+
+
+BASIS_STATUS_LABELS: dict[str, str] = {
+    BasisStatus.VALID.value: "依据有效",
+    BasisStatus.INVALIDATED.value: "依据已失效",
 }

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from src.constants.enums import (
     ADVICE_ACTION_LABELS,
     ADVICE_STATUS_LABELS,
+    BASIS_STATUS_LABELS,
     CATEGORY_LABELS,
     RISK_LABELS,
     RiskLevel,
@@ -61,6 +62,10 @@ def serialize(db: Session, advice: Advice, role: str = "viewer") -> dict:
         "margin_pct": round(advice.margin_pct, 2),
         "gap_pct": round(advice.gap_pct, 2),
         "payload": payload,
+        "basis_status": advice.basis_status,
+        "basis_status_label": BASIS_STATUS_LABELS.get(advice.basis_status, advice.basis_status),
+        "basis_reason": advice.basis_reason,
+        "superseded_by_id": advice.superseded_by_id,
         "approver": advice.approver,
         "decide_note": advice.decide_note,
         "decided_at": iso_utc(advice.decided_at),
@@ -76,6 +81,7 @@ def list_advices(
     sku_id: int | None = None,
     run_id: int | None = None,
     q: str | None = None,
+    basis_status: str | None = None,
     role: str = "viewer",
     limit: int = 40,
     offset: int = 0,
@@ -91,6 +97,8 @@ def list_advices(
         conditions.append(Advice.sku_id == sku_id)
     if run_id:
         conditions.append(Advice.run_id == run_id)
+    if basis_status:
+        conditions.append(Advice.basis_status == basis_status)
     if q:
         like = f"%{q.strip()}%"
         conditions.append(or_(Sku.name.ilike(like), Sku.sku_code.ilike(like), Advice.title.ilike(like)))
@@ -100,7 +108,15 @@ def list_advices(
     total = db.scalar(count_stmt) or 0
     risk_rank = {RiskLevel.HIGH.value: 0, RiskLevel.MEDIUM.value: 1, RiskLevel.LOW.value: 2}
     rows = db.scalars(stmt.order_by(Advice.status, Advice.severity, Advice.id.desc()).limit(limit).offset(offset)).all()
-    rows = sorted(rows, key=lambda row: (row.status != "pending", risk_rank.get(row.severity, 9), row.gap_pct))
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            row.status != "pending",
+            row.basis_status == "invalidated",
+            risk_rank.get(row.severity, 9),
+            row.gap_pct,
+        ),
+    )
     return {
         "items": [serialize(db, row, role) for row in rows],
         "total": total,
@@ -119,6 +135,19 @@ def get_advice(db: Session, advice_id: int) -> Advice:
 def decide(db: Session, advice: Advice, *, status: str, note: str | None, approver: str, approved_price: float | None) -> Advice:
     if status not in ("approved", "rejected"):
         raise AppError("VALIDATION", 422, {"field": "status", "allowed": ["approved", "rejected"]})
+    if advice.basis_status == "invalidated" or advice.status == "voided":
+        # 依据已失效：不允许继续审批，必须先重跑测算拿到按可见价重算的新建议
+        raise AppError(
+            "BASIS_INVALIDATED",
+            409,
+            {
+                "advice_id": advice.id,
+                "basis_status": advice.basis_status,
+                "basis_reason": advice.basis_reason,
+                "superseded_by_id": advice.superseded_by_id,
+                "reason": "该建议的券后价依据已失效，请先重跑测算再审批",
+            },
+        )
     if status == "rejected" and not (note and note.strip()):
         raise AppError("VALIDATION", 422, {"field": "note", "reason": "驳回必须填写原因"})
     advice.status = status

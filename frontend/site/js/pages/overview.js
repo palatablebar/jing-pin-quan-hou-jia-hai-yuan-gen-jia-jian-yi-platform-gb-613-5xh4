@@ -56,6 +56,8 @@ export const overviewPage = {
         ${kpiTag({ label: '抓价快照', value: data.snapshots_total, suffix: '条', hint: `近 3 天，含券配置` })}
         ${kpiTag({ label: '待审批建议', value: data.pending_total, suffix: '条', hint: `累计 ${data.advices_total} 条`, tone: 'accent' })}
         ${kpiTag({ label: '高风险', value: data.high_risk_total, suffix: '条', hint: '破底价或毛利 < 5%', tone: data.high_risk_total ? 'danger' : '' })}
+        ${kpiTag({ label: '券依据失效', value: data.invalidated_snapshots_total || 0, suffix: '条', hint: '券不可领，可见价已重算', tone: data.invalidated_snapshots_total ? 'danger' : '' })}
+        ${kpiTag({ label: '已作废建议', value: data.voided_advices_total || 0, suffix: '条', hint: '旧依据作废，去向见建议详情', tone: 'zinc' })}
         ${kpiTag({ label: '平均价差', value: signedPct(data.avg_gap_pct), suffix: '', hint: `平均建议毛利 ${Number(data.avg_margin_pct).toFixed(2)}%`, tone: 'zinc' })}
       </section>
 

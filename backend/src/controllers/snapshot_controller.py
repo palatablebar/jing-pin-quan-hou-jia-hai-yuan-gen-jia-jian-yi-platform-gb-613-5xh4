@@ -4,18 +4,21 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from src.models.snapshot import Snapshot
 from src.services import audit_service, effective_price, snapshot_service
 from src.utils.errors import AppError
-from src.utils.timeutil import utcnow
+from src.utils.timeutil import local_now
 
 
 def list_snapshots(db: Session, **filters) -> dict:
     data = snapshot_service.list_snapshots(db, **filters)
     data["capture_days"] = snapshot_service.capture_days(db)
+    data["invalidated_total"] = db.scalar(
+        select(func.count()).select_from(Snapshot).where(Snapshot.basis_status == "invalidated")
+    ) or 0
     return data
 
 
@@ -24,7 +27,78 @@ def get_snapshot(db: Session, snapshot_id: int, role: str) -> dict:
     if not (snapshot.effective or {}).get("valid"):
         snapshot_service.recompute(db, snapshot)
         db.commit()
+    elif not (snapshot.effective_visible or {}).get("valid"):
+        # 历史快照/补录快照首次打开时补一次券台账关联，只读刷新，不领券
+        snapshot_service.ensure_coupon_links(db, snapshot)
+        db.commit()
     return snapshot_service.serialize(db, snapshot, role, detail=True)
+
+
+def refresh_snapshot(db: Session, snapshot_id: int, payload: dict, principal: dict, request: Request) -> dict:
+    """核对当前可用价：刷新券状态/名额/领取权（幂等领券），券不可领就重算可见价并标依据失效。"""
+    snapshot = snapshot_service.get_snapshot(db, snapshot_id)
+    info = snapshot_service.refresh(db, snapshot)
+    rerun = None
+    is_today = snapshot.captured_on == local_now().date()
+    if info["invalidated"] and payload.get("rerun", True) and is_today:
+        # 依据失效就当场重算：旧待审批建议作废，新建议按当前可见价生成
+        from src.services import pricing_service
+
+        captured_on = snapshot.captured_on
+        run = pricing_service.compute_run(
+            db,
+            captured_on=captured_on,
+            operator_email=principal["email"],
+            trigger="manual",
+        )
+        rerun = {
+            "run_no": run.run_no,
+            "run_id": run.id,
+            "status": run.status,
+            "advices": run.output_count,
+            "invalidated_snapshots": (run.metrics or {}).get("invalidated_snapshots", 0),
+            "voided_advices": (run.metrics or {}).get("voided_advices", 0),
+            "claims_new": (run.metrics or {}).get("claims_new", 0),
+            "claims_reused": (run.metrics or {}).get("claims_reused", 0),
+        }
+        audit_service.record(
+            db,
+            actor_email=principal["email"],
+            actor_role=principal["role"],
+            action="run.create",
+            entity="run",
+            entity_id=run.id,
+            detail={"trigger": "coupon_check", "run_no": run.run_no, "captured_on": str(captured_on)},
+            ip=request.client.host if request.client else None,
+        )
+    audit_service.record(
+        db,
+        actor_email=principal["email"],
+        actor_role=principal["role"],
+        action="snapshot.coupon_check",
+        entity="snapshot",
+        entity_id=snapshot.id,
+        detail={
+            "captured_on": snapshot.captured_on.isoformat(),
+            "claim": info["claims"],
+            "invalidated": info["invalidated"],
+            "unavailable": [item["kind"] for item in info["unavailable"]],
+            "reason": payload.get("reason"),
+        },
+        ip=request.client.host if request.client else None,
+    )
+    db.commit()
+    data = snapshot_service.serialize(db, snapshot, principal["role"], detail=True)
+    data["coupon_check"] = {
+        "claims": info["claims"],
+        "invalidated": info["invalidated"],
+        "unavailable": info["unavailable"],
+        "visible_unit_price_1": data["visible_unit_price_1"],
+        "basis_status": data["basis_status"],
+        "basis_reason": data["basis_reason"],
+        "rerun": rerun,
+    }
+    return data
 
 
 def create_snapshot(db: Session, payload: dict, principal: dict, request: Request) -> dict:

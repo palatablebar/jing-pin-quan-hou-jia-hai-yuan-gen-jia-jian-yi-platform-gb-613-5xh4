@@ -12,22 +12,23 @@
   3. 没有依据链：跟了哪一档、依据哪天哪条快照、谁批的，吵架时说不清。
 - **上下游**：竞品店铺页面（RPA 抓价，`capture_config.replay` 指向 fixture 回放）→ **本系统**（抓价快照入库 → 券后价还原 → 跟价建议 → 审批 → 改价单/导出）→ 电商后台改价 + 定价组日报。
 - **一天的工作剧本**：
-  1. 08:00 定时任务回放当天 320 条抓价快照（`campaign=618 现货`），失败快照进 `invalid_snapshots`。
-  2. 08:01 算法 A 把每条快照按 1/2/3 件还原成券后单价，写入 `snapshots.effective`。
+  1. 08:00 定时任务回放当天 320 条抓价快照（`campaign=618 现货`），失败快照进 `invalid_snapshots`；同时按快照里配置的券挂上**限量券台账**，抓价账号当日每张券只领一次。
+  2. 08:01 算法 A 把每条快照按 1/2/3 件还原成券后单价，写入 `snapshots.effective`（抓价口径，原样留档）。
   3. 08:02 算法 B 对每个 SKU 取对标竞品近 3 天券后单件价的分位数，套用命中的跟价规则算出建议价。
   4. 08:05 定价主管打开「跟价建议」，先看 9 条高风险（竞品券后价已破我方底价）。
   5. 09:00 主管对 `PB-sofa-001` 批准改价 ¥284.58（竞品 P25 ¥279.00，毛利 32.74%）。
-  6. 10:30 驳回 2 条降幅 > 15% 的建议，备注「等 618 结束再跟」。
-  7. 18:00 导出「跟价建议清单 CSV」给店长群，附券后 1/2/3 件价格与命中组合。
-  8. 20:00 晚班运营再跑一次测算，对比早晚价差，审计日志留痕。
+  6. 12:10 午间复核：「限量券台账」里抖音店铺券名额被抢空（早班还是 380 张）。
+  7. 12:12 运营在「抓价快照」点「核对当前可用价」：券状态 / 名额 / 账号领取权刷新，`snapshots.basis_status` 置为 `invalidated`，`effective_visible` 按**不靠该券**重算（`PB-sofa-001` 1 件 ¥299.00 而不是券面价 ¥279.00）；同一抓价重跑**不再领券**、账号可领次数不重复消耗。
+  8. 12:13 系统当场重算：早班依据该券的待审批建议作废（`status=voided`，`superseded_by_id` 指向新建议），新建议一律按可见价出。
+  9. 20:00 晚班运营再跑一次测算，对比早晚价差；页面与导出都能核对「当前可用价、失效原因、建议去向」，审计日志留痕。
 
 ## 2. 角色与权限
 
 | 角色 | 账号 | 权限 | 典型动作 |
 |---|---|---|---|
 | 定价主管 `admin` | `admin@pricewatch.io` | 竞品/SKU/规则维护 + 跑测算 + 审批 + 导出 + 审计 | 改底价与目标毛利、审批改价、导出 CSV |
-| 价格运营 `analyst` | `analyst@pricewatch.io` | 只读配置 + 跑测算 + 看建议 | 早晚各跑一次抓价测算、核对券后价 |
-| 店长只读 `viewer` | `viewer@pricewatch.io` | 只读；成本/底价脱敏 | 看券后价与建议，不能改价不能导出 |
+| 价格运营 `analyst` | `analyst@pricewatch.io` | 只读配置 + 跑测算 + 核对券后价/领券 + 看建议 | 早晚各跑一次抓价测算、午间核对券是否还能领 |
+| 店长只读 `viewer` | `viewer@pricewatch.io` | 只读；成本/底价脱敏 | 看券后价、当前可用价与建议，不能改券不能改价不能导出 |
 
 密码统一 `Demo@2026`。低权角色调用高权接口返回**真实 HTTP 403**（`viewer` 写配置/导出/审计、`analyst` 审批/导出/审计），无 token 401，非法参数 422，重复自然键 409。
 
@@ -39,8 +40,9 @@
 | ② | 抓价任务与快照入库（回放 RPA 抓价、手工补录、按日期/店铺/类目检索） | `#/snapshots` | `snapshot_service` + `snapshot_controller` | `GET /api/snapshots`、`GET /api/snapshots/{id}`、`POST /api/snapshots` |
 | ③ | 券后价还原（算法 A，3 个件数档位 + 命中组合说明） | `#/snapshots`（列表列 + 明细抽屉） | `services/effective_price.py` + `pricing_service` | `POST /api/runs`（回放当日快照并重算）、`GET /api/snapshots/{id}`（`effective` 明细） |
 | ④ | 跟价规则与建议（算法 B：P25 锚点、成本底线、底价硬约束） | `#/advices`、`#/catalog` | `rule_service` + `follow_advice.py` + `pricing_service` + `advice_controller` | `GET/POST /api/rules`、`PATCH /api/rules/{id}`、`POST /api/runs`、`GET /api/advices` |
+| ④′ | 限量券台账与依据失效（券状态 / 名额 / 抓价账号领取权；券不可领即重算可见价） | `#/coupons`、`#/snapshots` | `coupon_service` + `pricing_service` + `coupon_controller` | `GET /api/coupons`、`GET/PATCH /api/coupons/{id}`、`POST /api/snapshots/{id}/coupon-check` |
 | ⑤ | 审批与改价（批准/驳回、核定改价、审批人留痕） | `#/advices`（明细抽屉） | `advice_service` + `advice_controller` | `PATCH /api/advices/{id}/decision` |
-| ⑥ | 报表导出与值班盘点（建议/快照/运行三张 CSV、总览 KPI） | `#/exports`、`#/overview` | `export_service` + `export_controller`；`overview_service` | `GET /api/exports/advices.csv`、`/snapshots.csv`、`/runs.csv`、`GET /api/overview` |
+| ⑥ | 报表导出与值班盘点（建议/快照/运行三张 CSV、总览 KPI；CSV 带当前可用价、依据状态、失效原因、替代建议与领券指标） | `#/exports`、`#/overview` | `export_service` + `export_controller`；`overview_service` | `GET /api/exports/advices.csv`、`/snapshots.csv`、`/runs.csv`、`GET /api/overview` |
 
 横切能力（不计入业务模块）：JWT 三角色鉴权、审计日志（`GET /api/audit`，仅 admin）、Redis 固定窗口限流、worker 心跳。
 
@@ -62,6 +64,11 @@ unit(n)  = payable / n
 ```
 
 输出 `unit_price_1/2/3`、`best_units`、`best_payable`、`note`（命中组合说明）、`discount_pct`、`confidence`。失败态（页面价 ≤ 0、门槛为负、券面 > 门槛、会员折扣越界）返回 `valid=false, error=INVALID_SNAPSHOT`，计入运行指标 `invalid_snapshots`。
+
+**券不可领时的口径（增量）**：`compute_effective_price(spec, unavailable={kind: reason})` 会先剔除
+不可领的券再按上面的规则重算，结果里返回 `excluded` / `degraded` / `visible_unit_price`。
+不传 `unavailable` 时结果与历史版本逐字一致。门店午间抢空的店铺券即走这条路径——
+快照保留早班 `effective`（券面价口径）作历史留档，`effective_visible` 才是当前能兑现的可见价。
 
 **手算校验（验收口径）**：页面价 299、满 300 减 40、店铺券满 200 减 20、平台每满 300 减 50：
 
@@ -104,7 +111,8 @@ docker compose up -d --build     # 等 5/5 healthy
 open http://localhost:18202
 ```
 
-首次启动 backend 自动建表并执行一次 seed（`SEED_DEMO=true`）。seed 幂等，可重复执行：
+首次启动 backend 自动建表并执行一次 seed（`SEED_DEMO=true`）。seed 幂等，可重复执行
+（限量券台账也走自然键 `coupons.code`，重复 seed 不会重复建券、不会重复领券）：
 
 ```bash
 docker compose exec -T backend python -m scripts.seed_demo
@@ -135,6 +143,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 ```text
 backend/
   src/{config,constants,controllers,middlewares,models,routes,schemas,services,utils}
+  src/services/coupon_service.py   # 限量券台账：状态/名额/领取权/依据失效（纯计算 + DB 写账）
   src/services/{effective_price,follow_advice,pricing_service,...}.py   # 两个算法是纯函数
   scripts/{seed_demo.py,demo_config.py,worker_healthcheck.sh}
   migrations/001_core_tables.sql   tests/
@@ -153,11 +162,15 @@ frontend/site/
 |---|---|---|---|
 | 竞品店铺 `Competitor` | `competitors` | code、name、platform、shop_url、capture_config、last_captured_at | `code` |
 | 自有 SKU `Sku` | `skus` | sku_code、name、category、competitor_id、cost、floor_price、target_margin_pct、current_price | `sku_code` |
-| 抓价快照 `Snapshot` | `snapshots` | sku_id、captured_on、page_price、满减/店铺券/平台券/会员折扣、effective(算法 A) | `(sku_id, captured_on)` |
+| 抓价快照 `Snapshot` | `snapshots` | sku_id、captured_on、page_price、满减/店铺券/平台券/会员折扣、effective(算法 A 抓价口径)、effective_visible(当前可用价)、basis_status/basis_reason | `(sku_id, captured_on)` |
 | 跟价规则 `Rule` | `rules` | code、scope_kind/scope_value（sku>category>competitor>global）、strategy、target_margin_pct、max_drop_pct、priority | `code` |
-| 跟价建议 `Advice` | `advices` | run_id、sku_id、P10/P25/P50、suggested_price、margin_pct、gap_pct、severity、status、approver | `(run_id, sku_id)` |
+| 跟价建议 `Advice` | `advices` | run_id、sku_id、P10/P25/P50、suggested_price、margin_pct、gap_pct、severity、status(含 `voided`)、basis_status/basis_reason、superseded_by_id、approver | `(run_id, sku_id)` |
+| 限量券 `Coupon` | `coupons` | code、competitor_id、sku_id、kind、券面、total_quota/claimed_count、per_account_limit、status、eligible | `code` |
+| 快照券关联 `SnapshotCoupon` | `snapshot_coupons` | snapshot_id、coupon_id、抓价时/当前状态、账号领取权、名额前后值、claimable、reason | `(snapshot_id, coupon_id)` |
+| 领取记录 `CouponClaim` | `coupon_claims` | coupon_id、account_email、captured_on、claim_key、result、attempts | `claim_key`（券+账号+抓价日） |
+| 券变更事件 `CouponEvent` | `coupon_events` | coupon_id、event、状态/名额/资格前后值、reason、actor | — |
 
-另有执行实体 `Run`（一次测算）与横切的 `User` / `AuditLog`。seed 口径：6 竞品 / 320 SKU / 960 快照（320×3 天）/ 5 条规则 / 1 次测算 → 42 条建议（high 9 / medium 13 / low 20）。
+另有执行实体 `Run`（一次测算）与横切的 `User` / `AuditLog`。seed 口径：6 竞品 / 320 SKU / 960 快照（320×3 天）/ 5 条规则 / 12 张限量券 / 1 次测算 → 42 条建议（high 9 / medium 13 / low 20）。
 
 ## 11. 共享枚举出现位置
 
@@ -168,7 +181,10 @@ frontend/site/
 | 类目 `sofa/table/bed/cabinet/decor` | `enums.py`（`Category` + `CATEGORY_LABELS`） | `config.js` → `ENUMS.category` |
 | 跟价策略 `guarded/aggressive/hold` | `enums.py`（`RuleStrategy`） | `config.js` → `ENUMS.strategy` |
 | 风险等级 `high/medium/low` | `enums.py`（`RiskLevel` + `RISK_LABELS`） | `config.js` → `ENUMS.risk` / `riskTone()` |
-| 审批状态 `pending/approved/rejected` | `enums.py`（`AdviceStatus`） | `config.js` → `ENUMS.adviceStatus` / `statusTone()` |
+| 审批状态 `pending/approved/rejected/voided` | `enums.py`（`AdviceStatus`） | `config.js` → `ENUMS.adviceStatus` / `statusTone()` |
+| 券状态 `active/exhausted/paused/expired` | `enums.py`（`CouponStatus`） | `config.js` → `ENUMS.couponStatus` / `couponTone()` |
+| 账号领取结果 `not_claimed/claimed/reused/limit_reached/ineligible/exhausted/unavailable` | `enums.py`（`ClaimStatus`） | `config.js` → `ENUMS.claimStatus` / `claimTone()` |
+| 依据状态 `valid/invalidated` | `enums.py`（`BasisStatus`） | `config.js` → `ENUMS.basisStatus` / `basisTone()` |
 | 建议动作 `follow/hold/raise` | `enums.py`（`AdviceAction`） | `config.js` → `ENUMS.action` |
 | 运行状态 / 触发方式 | `enums.py`（`RunStatus` / `TriggerKind`） | `config.js` → `ENUMS.runStatus` / `ENUMS.trigger` |
 

@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from src.config.database import get_db
-from src.constants.roles import SKU_WRITE_ROLES
+from src.constants.roles import SKU_WRITE_ROLES, SNAPSHOT_CHECK_ROLES
 from src.controllers import snapshot_controller
 from src.middlewares.rbac import READ_ROLES, require_roles
 from src.schemas.snapshot import SnapshotIn
+from src.schemas.coupon import CouponCheckIn
 from src.utils.pagination import page_params
 
 router = APIRouter(prefix="/snapshots", tags=["snapshots"])
@@ -22,6 +23,7 @@ def list_snapshots(
     category: str | None = None,
     sku_id: int | None = None,
     q: str | None = None,
+    basis_status: str | None = None,
     limit: int = Query(40),
     offset: int = Query(0),
     db: Session = Depends(get_db),
@@ -35,6 +37,7 @@ def list_snapshots(
         category=category,
         sku_id=sku_id,
         q=q,
+        basis_status=basis_status,
         role=principal["role"],
         limit=page.limit,
         offset=page.offset,
@@ -46,6 +49,18 @@ def get_snapshot(
     snapshot_id: int, db: Session = Depends(get_db), principal: dict = Depends(require_roles(*READ_ROLES))
 ) -> dict:
     return snapshot_controller.get_snapshot(db, snapshot_id, principal["role"])
+
+
+@router.post("/{snapshot_id}/coupon-check")
+def refresh_snapshot_coupons(
+    snapshot_id: int,
+    payload: CouponCheckIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_roles(*SNAPSHOT_CHECK_ROLES)),
+) -> dict:
+    """核对当前可用价：刷新券状态 / 名额 / 领取权（重跑不重复领券）并重算可见价。"""
+    return snapshot_controller.refresh_snapshot(db, snapshot_id, payload.model_dump(), principal, request)
 
 
 @router.post("", status_code=201)
